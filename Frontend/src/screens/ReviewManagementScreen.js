@@ -1,23 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  StyleSheet, 
-  Text, 
-  View, 
-  ScrollView, 
-  TouchableOpacity, 
-  SafeAreaView, 
+import {
+  StyleSheet,
+  Text,
+  View,
+  ScrollView,
+  TouchableOpacity,
+  SafeAreaView,
   StatusBar,
   TextInput,
-  Dimensions,
-  Alert,
   Platform,
   Modal,
-  ActivityIndicator
+  ActivityIndicator,
+  Image,
+  FlatList,
+  Dimensions,
+  RefreshControl,
 } from 'react-native';
-import { ChevronLeft, MessageSquare, Star, Trash2, Reply, X, Send, User } from 'lucide-react-native';
+import {
+  ChevronLeft,
+  MessageSquare,
+  Star,
+  Trash2,
+  X,
+  User,
+  CheckCircle,
+  ShieldCheck,
+  ImageIcon,
+  Reply,
+  Send,
+} from 'lucide-react-native';
 import { useUser } from '../context/UserContext';
 import { API_BASE } from '../config/api';
-import { RefreshControl } from 'react-native';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function ReviewManagementScreen({ navigation }) {
   const { user } = useUser();
@@ -25,10 +40,12 @@ export default function ReviewManagementScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
   const [selectedReview, setSelectedReview] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [isReplyModalVisible, setIsReplyModalVisible] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [sendingReply, setSendingReply] = useState(false);
 
   useEffect(() => {
     fetchReviews();
@@ -36,8 +53,8 @@ export default function ReviewManagementScreen({ navigation }) {
 
   const fetchReviews = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/orders/reviews/all`, {
-        headers: { Authorization: `Bearer ${user?.token}` }
+      const response = await fetch(`${API_BASE}/api/reviews/admin/all`, {
+        headers: { Authorization: `Bearer ${user?.token}` },
       });
       const data = await response.json();
       if (response.ok) {
@@ -45,84 +62,101 @@ export default function ReviewManagementScreen({ navigation }) {
       }
     } catch (error) {
       console.error('Error fetching reviews:', error);
-      Alert.alert('Error', 'Could not load reviews.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  const handleDelete = (orderId) => {
-    Alert.alert(
-      'Remove Review',
-      'Are you sure you want to permanently delete this customer feedback?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const response = await fetch(`${API_BASE}/api/orders/${orderId}/review`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${user?.token}` }
-              });
-              if (response.ok) {
-                setReviews(prev => prev.filter(r => r._id !== orderId));
-                Alert.alert('Success', 'Review has been removed.');
-              }
-            } catch (error) {
-              Alert.alert('Error', 'Failed to delete review.');
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleSendReply = async () => {
-    if (!replyText.trim()) return;
-
+  const performDelete = async (reviewId) => {
     try {
-      setSaving(true);
-      const response = await fetch(`${API_BASE}/api/orders/${selectedReview._id}/review/reply`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${user?.token}`
-        },
-        body: JSON.stringify({ reply: replyText })
+      const response = await fetch(`${API_BASE}/api/reviews/${reviewId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${user?.token}` },
       });
-
       if (response.ok) {
-        setReviews(prev => prev.map(r => 
-          r._id === selectedReview._id ? { ...r, review: { ...r.review, reply: replyText } } : r
-        ));
-        setIsReplyModalVisible(false);
-        setReplyText('');
-        Alert.alert('Reply Posted', 'Your response has been added to the review.');
+        setReviews((prev) => prev.filter((r) => r._id !== reviewId));
+        setConfirmDeleteId(null);
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to post reply.');
-    } finally {
-      setSaving(false);
+      console.error('Delete error:', error);
     }
   };
 
-  const openReplyModal = (order) => {
-    setSelectedReview(order);
-    setReplyText(order.review?.reply || '');
+  const openReplyModal = (review) => {
+    setSelectedReview(review);
+    setReplyText(review.adminReply || '');
     setIsReplyModalVisible(true);
   };
 
-  const filteredReviews = reviews.filter(r => 
-    (r.user?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-    (r.review?.comment || '').toLowerCase().includes(searchQuery.toLowerCase())
+  const handleSendReply = async () => {
+    if (!replyText.trim() || !selectedReview) return;
+    try {
+      setSendingReply(true);
+      const response = await fetch(`${API_BASE}/api/reviews/${selectedReview._id}/reply`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user?.token}`,
+        },
+        body: JSON.stringify({ reply: replyText.trim() }),
+      });
+      if (response.ok) {
+        const updated = await response.json();
+        setReviews((prev) =>
+          prev.map((r) => (r._id === updated._id ? updated : r))
+        );
+        setIsReplyModalVisible(false);
+        setReplyText('');
+        setSelectedReview(null);
+      }
+    } catch (error) {
+      console.error('Reply error:', error);
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
+  const handleVerify = async (reviewId) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/reviews/${reviewId}/verify`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${user?.token}` },
+      });
+      if (response.ok) {
+        setReviews((prev) =>
+          prev.map((r) => (r._id === reviewId ? { ...r, isVerified: true } : r))
+        );
+      }
+    } catch (error) {
+      console.error('Verify error:', error);
+    }
+  };
+
+  // Reviews from /api/reviews/admin/all have: user, product, name, rating, comment, images[], isVerified
+  const filteredReviews = reviews.filter(
+    (r) =>
+      (r.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (r.comment || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (r.product?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const renderStars = (rating) =>
+    [1, 2, 3, 4, 5].map((s) => (
+      <Star
+        key={s}
+        size={12}
+        color="#D4AF37"
+        fill={s <= rating ? '#D4AF37' : 'transparent'}
+        style={{ marginRight: 2 }}
+      />
+    ));
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
+
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <ChevronLeft size={24} color="#00332B" />
@@ -131,131 +165,253 @@ export default function ReviewManagementScreen({ navigation }) {
         <View style={{ width: 24 }} />
       </View>
 
+      {/* Search */}
       <View style={styles.searchSection}>
         <View style={styles.searchBar}>
           <MessageSquare size={18} color="#999" />
-          <TextInput 
+          <TextInput
             style={styles.searchInput}
-            placeholder="Filter reviews by product or customer..."
+            placeholder="Search by customer, product or comment..."
             placeholderTextColor="#999"
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <X size={16} color="#999" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      <ScrollView 
-        contentContainerStyle={styles.content} 
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
-            onRefresh={() => {
-              setRefreshing(true);
-              fetchReviews();
-            }}
-            color="#00332B"
-          />
-        }
-      >
-        <View style={styles.summaryBox}>
-          <Text style={styles.summaryTitle}>Feedback Hub</Text>
-          <Text style={styles.summarySubtitle}>Manage and respond to client testimonials.</Text>
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#00332B" />
         </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); fetchReviews(); }}
+              colors={['#00332B']}
+            />
+          }
+        >
+          {/* Summary */}
+          <View style={styles.summaryBox}>
+            <Text style={styles.summaryTitle}>Feedback Hub</Text>
+            <Text style={styles.summarySubtitle}>
+              {reviews.length} review{reviews.length !== 1 ? 's' : ''} · {reviews.filter(r => r.isVerified).length} verified
+            </Text>
+          </View>
 
-        {filteredReviews.map(item => (
-          <View key={item._id} style={styles.reviewCard}>
-            <View style={styles.cardHeader}>
-              <View style={styles.customerInfo}>
-                <View style={styles.avatarPlaceholder}><User size={14} color="#00332B" /></View>
-                <View>
-                  <Text style={styles.customerName}>{item.user?.name || 'Guest User'}</Text>
-                  <Text style={styles.productName}>{item.orderItems?.[0]?.name || 'Atelier Piece'}</Text>
+          {filteredReviews.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <MessageSquare size={40} color="#DDD" />
+              <Text style={styles.emptyText}>No reviews found.</Text>
+            </View>
+          ) : (
+            filteredReviews.map((item) => (
+              <View key={item._id} style={styles.reviewCard}>
+
+                {/* Card Header: Avatar + Name + Product + Rating */}
+                <View style={styles.cardHeader}>
+                  <View style={styles.avatarCircle}>
+                    <User size={16} color="#00332B" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.customerName}>{item.name || item.user?.name || 'User'}</Text>
+                      {item.isVerified && (
+                        <ShieldCheck size={14} color="#00332B" />
+                      )}
+                    </View>
+                    <Text style={styles.productName}>
+                      {item.product?.name || 'Atelier Product'}
+                    </Text>
+                  </View>
+                  {/* Star Rating */}
+                  <View style={styles.ratingBox}>
+                    {renderStars(item.rating || 0)}
+                    <Text style={styles.ratingNum}>{item.rating}</Text>
+                  </View>
+                </View>
+
+                {/* Comment */}
+                <Text style={styles.commentText}>"{item.comment}"</Text>
+
+                {/* Images Row */}
+                {item.images && item.images.length > 0 && (
+                  <View style={styles.imagesSection}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                      <ImageIcon size={12} color="#999" />
+                      <Text style={styles.imagesLabel}>{item.images.length} PHOTO{item.images.length > 1 ? 'S' : ''}</Text>
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      {item.images.map((img, idx) => (
+                        <TouchableOpacity
+                          key={idx}
+                          onPress={() => setPreviewImage(img.data)}
+                          activeOpacity={0.85}
+                        >
+                          <Image
+                            source={{ uri: img.data }}
+                            style={styles.reviewImage}
+                          />
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Admin Reply display */}
+                {item.adminReply ? (
+                  <View style={styles.replyBox}>
+                    <Text style={styles.replyLabel}>ATELIER RESPONSE:</Text>
+                    <Text style={styles.replyText}>{item.adminReply}</Text>
+                    {item.repliedAt && (
+                      <Text style={styles.replyDate}>
+                        {new Date(item.repliedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </Text>
+                    )}
+                  </View>
+                ) : null}
+
+                {/* Footer: Date + Actions */}
+                <View style={styles.cardFooter}>
+                  <Text style={styles.dateText}>
+                    {item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Recent'}
+                  </Text>
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {/* Reply Button */}
+                    <TouchableOpacity
+                      style={styles.replyBtn}
+                      onPress={() => openReplyModal(item)}
+                    >
+                      <Reply size={14} color="#00332B" />
+                      <Text style={styles.replyBtnText}>
+                        {item.adminReply ? 'Edit Reply' : 'Reply'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Verify button */}
+                    {!item.isVerified && (
+                      <TouchableOpacity
+                        style={styles.verifyBtn}
+                        onPress={() => handleVerify(item._id)}
+                      >
+                        <CheckCircle size={14} color="#00332B" />
+                        <Text style={styles.verifyBtnText}>Verify</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Delete / Confirm inline */}
+                    {confirmDeleteId === item._id ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 12, color: '#E53935', fontWeight: '600' }}>Sure?</Text>
+                        <TouchableOpacity
+                          onPress={() => performDelete(item._id)}
+                          style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#E53935', borderRadius: 4 }}
+                        >
+                          <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold' }}>YES</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setConfirmDeleteId(null)}
+                          style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#EEE', borderRadius: 4 }}
+                        >
+                          <Text style={{ color: '#333', fontSize: 11, fontWeight: 'bold' }}>NO</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.deleteBtn}
+                        onPress={() => setConfirmDeleteId(item._id)}
+                      >
+                        <Trash2 size={14} color="#E53935" />
+                        <Text style={styles.deleteBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
               </View>
-              <View style={styles.ratingBox}>
-                <Star size={12} color="#D4AF37" fill="#D4AF37" />
-                <Text style={styles.ratingText}>{item.review?.rating || 0}</Text>
-              </View>
-            </View>
+            ))
+          )}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      )}
 
-            <Text style={styles.commentText}>{item.review?.comment}</Text>
-            
-            {item.review?.reply ? (
-              <View style={styles.replyBox}>
-                <Text style={styles.replyLabel}>YOUR RESPONSE:</Text>
-                <Text style={styles.replyText}>{item.review.reply}</Text>
-              </View>
-            ) : null}
-
-            <View style={styles.cardActions}>
-              <Text style={styles.dateText}>{item.review?.createdAt ? new Date(item.review.createdAt).toLocaleDateString() : 'Recent'}</Text>
-              <View style={styles.actionButtons}>
-                <TouchableOpacity 
-                  style={styles.actionBtn}
-                  onPress={() => openReplyModal(item)}
-                >
-                  <Reply size={16} color="#00332B" />
-                  <Text style={styles.actionBtnText}>Reply</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                   style={[styles.actionBtn, { marginLeft: 15 }]}
-                   onPress={() => handleDelete(item._id)}
-                >
-                  <Trash2 size={16} color="#E53935" />
-                  <Text style={[styles.actionBtnText, { color: '#E53935' }]}>Delete</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        ))}
-
-        {filteredReviews.length === 0 && (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No client feedback found in recent logs.</Text>
-          </View>
-        )}
-      </ScrollView>
+      {/* Full-Screen Image Preview Modal */}
+      <Modal visible={!!previewImage} transparent animationType="fade">
+        <View style={styles.previewOverlay}>
+          <TouchableOpacity
+            style={styles.previewClose}
+            onPress={() => setPreviewImage(null)}
+          >
+            <X size={28} color="#FFF" />
+          </TouchableOpacity>
+          {previewImage && (
+            <Image
+              source={{ uri: previewImage }}
+              style={styles.previewImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
 
       {/* Reply Modal */}
-      <Modal visible={isReplyModalVisible} animationType="slide" transparent={true}>
+      <Modal visible={isReplyModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>RESPOND TO FEEDBACK</Text>
-                    <TouchableOpacity onPress={() => setIsReplyModalVisible(false)}>
-                        <X size={24} color="#999" />
-                    </TouchableOpacity>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>RESPOND TO REVIEW</Text>
+              <TouchableOpacity onPress={() => { setIsReplyModalVisible(false); setReplyText(''); }}>
+                <X size={22} color="#999" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedReview && (
+              <>
+                {/* Customer's comment preview */}
+                <View style={styles.contextBox}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 5 }}>
+                    <User size={12} color="#999" />
+                    <Text style={styles.contextLabel}>{selectedReview.name || selectedReview.user?.name}</Text>
+                  </View>
+                  <Text style={styles.contextComment} numberOfLines={3}>"{selectedReview.comment}"</Text>
                 </View>
 
-                {selectedReview && (
-                    <View>
-                        <View style={styles.contextBox}>
-                            <Text style={styles.contextLabel}>CUSTOMER SAYS:</Text>
-                            <Text style={styles.contextText} numberOfLines={2}>"{selectedReview.comment}"</Text>
-                        </View>
-                        
-                        <Text style={styles.inputLabel}>OFFICIAL ATELIER RESPONSE</Text>
-                        <TextInput 
-                            style={styles.replyInput}
-                            placeholder="Type your response here..."
-                            multiline
-                            textAlignVertical="top"
-                            value={replyText}
-                            onChangeText={setReplyText}
-                        />
+                <Text style={styles.inputLabel}>YOUR OFFICIAL RESPONSE</Text>
+                <TextInput
+                  style={styles.replyInput}
+                  placeholder="Write your response here..."
+                  placeholderTextColor="#AAA"
+                  multiline
+                  textAlignVertical="top"
+                  value={replyText}
+                  onChangeText={setReplyText}
+                />
 
-                        <TouchableOpacity 
-                            style={styles.sendBtn}
-                            onPress={handleSendReply}
-                        >
-                            <Send size={18} color="#FFF" />
-                            <Text style={styles.sendBtnText}>POST RESPONSE</Text>
-                        </TouchableOpacity>
-                    </View>
-                )}
-            </View>
+                <TouchableOpacity
+                  style={[styles.sendBtn, (!replyText.trim() || sendingReply) && { opacity: 0.6 }]}
+                  onPress={handleSendReply}
+                  disabled={!replyText.trim() || sendingReply}
+                >
+                  {sendingReply
+                    ? <ActivityIndicator color="#FFF" size="small" />
+                    : <>
+                        <Send size={16} color="#FFF" />
+                        <Text style={styles.sendBtnText}>POST RESPONSE</Text>
+                      </>
+                  }
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -265,7 +421,7 @@ export default function ReviewManagementScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: '#FAF9F6',
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0,
   },
   header: {
@@ -274,26 +430,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 24,
     height: 60,
+    backgroundColor: '#FFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#F5F5F5',
+    borderBottomColor: '#F0EBE9',
   },
   headerTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
     letterSpacing: 2,
     color: '#00332B',
   },
   searchSection: {
-    paddingHorizontal: 24,
-    paddingVertical: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: '#FFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F3F5F4',
-    height: 52,
+    height: 48,
     borderRadius: 12,
-    paddingHorizontal: 15,
+    paddingHorizontal: 14,
   },
   searchInput: {
     flex: 1,
@@ -302,54 +462,49 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   content: {
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
+    paddingTop: 20,
   },
   summaryBox: {
-    marginBottom: 25,
+    marginBottom: 20,
   },
   summaryTitle: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
     color: '#1A1A1A',
   },
   summarySubtitle: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#999',
     marginTop: 4,
   },
   reviewCard: {
     backgroundColor: '#FFF',
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 20,
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#F0F0F0',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 3,
+    shadowRadius: 8,
+    elevation: 2,
   },
   cardHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  customerInfo: {
-    flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    marginBottom: 12,
+    gap: 10,
   },
-  avatarPlaceholder: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F3F5F4',
+  avatarCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F0F7F5',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
   },
   customerName: {
     fontSize: 14,
@@ -360,17 +515,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#8D6E63',
     fontWeight: '600',
-    marginTop: 1,
+    marginTop: 2,
   },
   ratingBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FAF9F0',
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
-  ratingText: {
+  ratingNum: {
     fontSize: 12,
     fontWeight: 'bold',
     color: '#D4AF37',
@@ -378,31 +533,29 @@ const styles = StyleSheet.create({
   },
   commentText: {
     fontSize: 13,
-    color: '#555',
-    lineHeight: 18,
-    marginBottom: 15,
-  },
-  replyBox: {
-    backgroundColor: '#F9FAF9',
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 15,
-    borderLeftWidth: 3,
-    borderLeftColor: '#00332B',
-  },
-  replyLabel: {
-    fontSize: 8,
-    fontWeight: 'bold',
-    color: '#00332B',
-    letterSpacing: 1,
-    marginBottom: 5,
-  },
-  replyText: {
-    fontSize: 12,
-    color: '#333',
+    color: '#444',
+    lineHeight: 20,
     fontStyle: 'italic',
+    marginBottom: 14,
   },
-  cardActions: {
+  imagesSection: {
+    marginBottom: 14,
+  },
+  imagesLabel: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    color: '#999',
+    letterSpacing: 1,
+    marginLeft: 5,
+  },
+  reviewImage: {
+    width: 90,
+    height: 90,
+    borderRadius: 10,
+    marginRight: 10,
+    backgroundColor: '#EEE',
+  },
+  cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -414,20 +567,86 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#BBB',
   },
-  actionButtons: {
+  verifyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#F0F7F5',
+    borderRadius: 6,
+    gap: 4,
   },
-  actionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  actionBtnText: {
-    fontSize: 12,
+  verifyBtnText: {
+    fontSize: 11,
     fontWeight: '700',
     color: '#00332B',
-    marginLeft: 6,
   },
+  deleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#FFF0F0',
+    borderRadius: 6,
+    gap: 4,
+  },
+  deleteBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#E53935',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 80,
+    gap: 12,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#BBB',
+    fontStyle: 'italic',
+  },
+  replyBox: {
+    backgroundColor: '#F0F7F5',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 14,
+    borderLeftWidth: 3,
+    borderLeftColor: '#00332B',
+  },
+  replyLabel: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#00332B',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  replyText: {
+    fontSize: 12,
+    color: '#333',
+    fontStyle: 'italic',
+    lineHeight: 18,
+  },
+  replyDate: {
+    fontSize: 10,
+    color: '#999',
+    marginTop: 6,
+    textAlign: 'right',
+  },
+  replyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#F0F7F5',
+    borderRadius: 6,
+    gap: 4,
+  },
+  replyBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#00332B',
+  },
+  // Reply Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -435,8 +654,8 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#FFF',
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     padding: 24,
     paddingBottom: 40,
   },
@@ -444,68 +663,78 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: 20,
   },
   modalTitle: {
     fontSize: 12,
     fontWeight: 'bold',
-    letterSpacing: 1.5,
+    letterSpacing: 2,
     color: '#00332B',
   },
   contextBox: {
     backgroundColor: '#FAF9F6',
-    padding: 15,
+    padding: 14,
     borderRadius: 12,
-    marginBottom: 25,
+    marginBottom: 20,
   },
   contextLabel: {
-    fontSize: 8,
-    fontWeight: 'bold',
-    color: '#999',
-    marginBottom: 5,
-  },
-  contextText: {
     fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  contextComment: {
+    fontSize: 13,
     color: '#888',
     fontStyle: 'italic',
+    lineHeight: 18,
   },
   inputLabel: {
     fontSize: 10,
     fontWeight: 'bold',
     color: '#1A1A1A',
-    marginBottom: 12,
+    letterSpacing: 1,
+    marginBottom: 10,
   },
   replyInput: {
     backgroundColor: '#F3F5F4',
-    height: 120,
-    borderRadius: 15,
-    padding: 15,
+    height: 130,
+    borderRadius: 14,
+    padding: 14,
     fontSize: 14,
     color: '#000',
-    marginBottom: 25,
+    marginBottom: 20,
   },
   sendBtn: {
     backgroundColor: '#00332B',
-    height: 56,
-    borderRadius: 15,
+    height: 54,
+    borderRadius: 14,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 10,
   },
   sendBtnText: {
     color: '#FFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
     letterSpacing: 2,
-    marginLeft: 10,
   },
-  emptyContainer: {
+  // Full-screen image preview
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 60,
   },
-  emptyText: {
-    fontSize: 14,
-    color: '#BBB',
-    fontStyle: 'italic',
+  previewClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
+  },
+  previewImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_WIDTH,
   },
 });
