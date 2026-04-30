@@ -10,7 +10,7 @@ const reviewSchema = mongoose.Schema(
     product: {
       type: mongoose.Schema.Types.ObjectId,
       required: true,
-      ref: 'Inventory', // Since products are stored in Inventory
+      ref: 'Inventory',
     },
     name: {
       type: String,
@@ -26,15 +26,28 @@ const reviewSchema = mongoose.Schema(
       type: String,
       required: true,
     },
-    image: {
-      type: String,
+    images: [
+      {
+        filename: String,
+        data: String, // Base64 encoded image data
+        size: Number,
+        uploadedAt: {
+          type: Date,
+          default: Date.now
+        }
+      }
+    ],
+    isVerified: {
+      type: Boolean,
+      default: false
     },
-    reply: {
+    adminReply: {
       type: String,
+      default: ''
     },
     repliedAt: {
-      type: Date,
-    },
+      type: Date
+    }
   },
   {
     timestamps: true,
